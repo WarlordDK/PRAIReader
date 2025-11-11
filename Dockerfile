@@ -20,6 +20,7 @@ RUN pip install --no-cache-dir --prefer-binary PyMuPDF==1.24.8
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+
 COPY . .
 
 EXPOSE 8000
