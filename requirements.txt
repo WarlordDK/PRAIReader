@@ -1,9 +1,10 @@
 pydantic[email]
 pydantic-settings
-fastapi
-uvicorn
 isort
 fitz
-pdf2image
-pymupdf
+fastapi
+uvicorn
 python-multipart
+pymupdf
+pdf2image
+pillow
