@@ -1,5 +1,5 @@
 from fastapi import APIRouter, UploadFile, File
-from services import pdf_reader
+from utils import pdf_reader
 
 router = APIRouter(prefix='/api', tags=['Analyze Presentations'])
 

@@ -8,3 +8,10 @@ python-multipart
 pymupdf
 pdf2image
 pillow
+transformers==4.35.2
+torch==2.1.1
+accelerate==0.24.1
+huggingface_hub==0.19.4
+requests==2.31.0
+python-dotenv==1.0.0
+openai==1.3.7
