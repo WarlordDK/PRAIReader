@@ -1,4 +1,6 @@
 import tempfile
+from typing import List, Dict
+
 import pymupdf
 from pdf2image import convert_from_path
 import os
@@ -32,3 +34,20 @@ def pdf_to_images(pdf_path):
     except Exception as e:
         print(f"Error converting PDF to images: {e}")
         return []
+
+def extract_text_by_slides(pdf_path: str) -> List[Dict]:
+    slides_text = []
+    try:
+        doc = pymupdf.open(pdf_path)
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            text = page.get_text()
+            slides_text.append({
+                'slide_number' : page_num + 1,
+                'text' : text,
+                'word_count' : len(text.split())
+            })
+        doc.close()
+    except Exception as e:
+        print(f'Error extracting text by slides : {e}')
+    return slides_text
