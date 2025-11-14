@@ -12,7 +12,7 @@ router = APIRouter(prefix='/api', tags=['Analyze Presentations'])
 @router.on_event("startup")
 async def startup_event():
     """Запускаем инициализацию всех моделей"""
-    print("🚀 Запускаем инициализацию моделей в фоне...")
+    print("Запускаем инициализацию моделей в фоне...")
 
     # Запускаем инициализацию обоих анализаторов параллельно
     await asyncio.gather(
@@ -20,7 +20,7 @@ async def startup_event():
         image_analyzer.initialize_models()
     )
 
-    print("✅ Все модели инициализированы")
+    print("Все модели инициализированы")
 
 
 @router.get('/')
@@ -49,16 +49,16 @@ async def analyze_presentation(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
     try:
-        print(f"🔍 Анализ файла: {file.filename}")
-        print(f"📝 Текстовая модель: {text_analyzer.models_initialized}")
-        print(f"🖼️ Image модель: {image_analyzer.models_initialized}")
+        print(f"Анализ файла: {file.filename}")
+        print(f"Текстовая модель: {text_analyzer.models_initialized}")
+        print(f"Image модель: {image_analyzer.models_initialized}")
 
         # Обрабатываем PDF
         pdf_path = pdf_reader.save_temp_pdf(file)
         slides_text = pdf_reader.extract_text_by_slides(pdf_path)
         slides_images = pdf_reader.pdf_to_images(pdf_path)
 
-        print(f"📊 Найдено слайдов: {len(slides_text)}")
+        print(f"Найдено слайдов: {len(slides_text)}")
 
         # Анализируем каждый слайд
         slides_analysis = []
