@@ -2,6 +2,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from utils import pdf_reader
 from utils.all_text_analyzer import all_text_analyzer
 from utils.content_analyzer import content_analyzer
+from utils.image_analyzer import image_analyzer
 import os
 import asyncio
 
@@ -12,7 +13,8 @@ router = APIRouter(prefix="/api", tags=["Analyze Presentations"])
 async def startup_event():
     await asyncio.gather(
         all_text_analyzer.initialize_models(),
-        content_analyzer.initialize_models()
+        content_analyzer.initialize_models(),
+        image_analyzer.initialize_models()
     )
 
 @router.get("/")
@@ -85,3 +87,27 @@ async def analyze_content(file: UploadFile = File(...)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Content analysis failed: {e}")
+
+@router.post("/analyze/visual")
+async def analyze_visual(file: UploadFile = File(...)):
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    try:
+        pdf_path = pdf_reader.save_temp_pdf(file)
+
+        slide_images = pdf_reader.pdf_to_images(pdf_path)
+
+
+        result = await image_analyzer.analyze_visual_presentation(slide_images)
+
+        os.unlink(pdf_path)
+
+        return {
+            "filename": file.filename,
+            "total_slides": len(slide_images),
+            "visual_report": result
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
