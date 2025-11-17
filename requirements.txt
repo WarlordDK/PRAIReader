@@ -1,4 +1,4 @@
-pydantic[email]
+pydantic
 pydantic-settings
 isort
 fitz
