@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 from PIL import Image
 from huggingface_hub import InferenceClient
 
+
 from core.config import get_hf_token
 
 
@@ -41,7 +42,6 @@ class ImageAnalyzer:
 
         slide_results = []
 
-        # --- Extract per-slide measurements ---
         for idx, img in enumerate(slide_images, start=1):
             info = {"slide_number": idx}
 
@@ -51,13 +51,19 @@ class ImageAnalyzer:
                 info["caption"] = ""
 
             stats = self._estimate_text_density(img)
-            info["text_density"] = stats["text_density"]
-            info["text_coverage"] = stats["text_coverage"]
+            info.update(stats)
+
+            # определяем условно тип слайда по текстовой нагрузке
+            if info["text_coverage"] > 0.35:
+                info["slide_type"] = "text_heavy"
+            elif info["text_coverage"] < 0.08:
+                info["slide_type"] = "image_heavy"
+            else:
+                info["slide_type"] = "balanced"
 
             slide_results.append(info)
 
         prompt = self._build_global_prompt(slide_results)
-
         raw = self._call_llm(prompt)
         parsed = self._try_parse_json(raw)
 
@@ -70,7 +76,6 @@ class ImageAnalyzer:
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         buf.seek(0)
-
         try:
             resp = self.vlm_client.image_to_text(buf)
             return resp.get("generated_text", "").strip()
@@ -80,60 +85,52 @@ class ImageAnalyzer:
     def _estimate_text_density(self, img: Image.Image) -> Dict[str, float]:
         gray = img.convert("L")
         hist = gray.histogram()
-
         dark = sum(hist[:70])
         total = sum(hist)
-
         density = dark / total if total else 0
         coverage = min(1.0, density * 1.8)
+        return {"text_density": round(density, 4), "text_coverage": round(coverage, 4)}
 
-        return {
-            "text_density": round(density, 4),
-            "text_coverage": round(coverage, 4)
-        }
+    # -----------------------------
+    # Промпт для LLM
+    # -----------------------------
 
     def _build_global_prompt(self, slides: List[Dict[str, Any]]) -> str:
+        # Вставляем пример JSON для модели, чтобы она вернула корректный формат
+        example_json = {
+            "visual_strengths": ["Сильная композиция на слайде 1"],
+            "visual_weaknesses": ["Слайды 2, 5: слишком много текста"],
+            "recommendations": ["Уменьшить текст на слайдах 2 и 5"],
+            "design_style": "Профессиональный, современный",
+            "visual_quality_score": 80,
+            "final_verdict": "Презентация в целом хороша, есть мелкие недочёты"
+        }
 
         return (
             "Ты — эксперт по дизайну презентаций.\n"
-            "Тебе переданы визуальные характеристики каждого слайда:\n"
-            "- caption (краткое описание картинки)\n"
-            "- text_density (оценка количества текста)\n"
-            "- text_coverage (занятость текста на слайде)\n\n"
-
-            "Важно: анализируй только визуальную составляющую. Не анализируй содержание текста.\n\n"
-
-            "Используя данные по каждому слайду, определи:\n"
-            "— на каких слайдах есть слишком много текста\n"
-            "— на каких слайдах слишком много изображений\n"
-            "— на каких слайдах мало визуальной структуры\n"
-            "— где плохие пропорции, контрастность, несбалансированность\n"
-            "— где встречаются повторяющиеся визуальные проблемы\n\n"
-
-            "Обязательное требование:\n"
-            "ВНИСИ НОМЕРА СЛАЙДОВ В КАЖДЫЙ ПУНКТ weaknesses и recommendations.\n"
-            "Например: 'Слайды 3, 5: перегруз контентом'.\n"
-            "А так же напиши сильные стороны визуального оформления презентации (2-3 пункта) \n "
-            "Не пиши абстрактные рекомендации.\n\n"
-
-            "Верни строго JSON:\n"
-            "{\n"
-            '  "visual_strengths": [string,...],\n'
-            '  "visual_weaknesses": [string,...],\n'
-            '  "recommendations": [string,...],\n'
-            '  "design_style": string,\n'
-            '  "visual_quality_score": int,\n'
-            '  "final_verdict": string\n'
-            "}\n\n"
-            f"Вот данные всех слайдов:\n{json.dumps(slides, ensure_ascii=False)}"
+            "Анализируй только визуальные характеристики слайдов (не текст и не смысл).\n"
+            "Всегда возвращай ответ в формате JSON, ключи оставляй английскими, "
+            "а текст внутри всех полей — строго на русском языке.\n\n"
+            "Данные по слайдам:\n"
+            f"{json.dumps(slides, ensure_ascii=False)}\n\n"
+            "Пример правильного JSON-ответа:\n"
+            f"{json.dumps(example_json, ensure_ascii=False)}\n\n"
+            "Укажи в recommendations и visual_weaknesses конкретные номера слайдов с проблемами."
         )
+
+    # -----------------------------
+    # Вызов LLM
+    # -----------------------------
 
     def _call_llm(self, prompt: str) -> str:
         try:
             resp = self.llm_client.chat_completion(
                 model=self.reasoning_model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=900,
+                messages=[
+                    {"role": "system", "content": "Ты — эксперт по визуальному анализу презентаций. Всегда отвечай на русском языке. Формат ответа — строго JSON."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=1500,
                 temperature=0.0
             )
             if isinstance(resp, dict):
@@ -146,6 +143,10 @@ class ImageAnalyzer:
             print(f"[ImageAnalyzer] LLM error: {e}")
             return ""
 
+    # -----------------------------
+    # JSON parsing
+    # -----------------------------
+
     def _try_parse_json(self, text: str):
         if not text:
             return None
@@ -155,7 +156,6 @@ class ImageAnalyzer:
             return json.loads(cleaned)
         except:
             return None
-
 
     def _fallback(self):
         return {
