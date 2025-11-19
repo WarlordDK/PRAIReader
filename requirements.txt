@@ -16,3 +16,5 @@ requests
 dotenv
 openai
 hf_xet
+qdrant_client
+sentence_transformers

@@ -1,4 +1,3 @@
-# utils/image_analyzer.py
 
 import json
 import io
@@ -53,7 +52,6 @@ class ImageAnalyzer:
             stats = self._estimate_text_density(img)
             info.update(stats)
 
-            # определяем условно тип слайда по текстовой нагрузке
             if info["text_coverage"] > 0.35:
                 info["slide_type"] = "text_heavy"
             elif info["text_coverage"] < 0.08:
@@ -91,12 +89,9 @@ class ImageAnalyzer:
         coverage = min(1.0, density * 1.8)
         return {"text_density": round(density, 4), "text_coverage": round(coverage, 4)}
 
-    # -----------------------------
-    # Промпт для LLM
-    # -----------------------------
+
 
     def _build_global_prompt(self, slides: List[Dict[str, Any]]) -> str:
-        # Вставляем пример JSON для модели, чтобы она вернула корректный формат
         example_json = {
             "visual_strengths": ["Сильная композиция на слайде 1"],
             "visual_weaknesses": ["Слайды 2, 5: слишком много текста"],
@@ -118,9 +113,6 @@ class ImageAnalyzer:
             "Укажи в recommendations и visual_weaknesses конкретные номера слайдов с проблемами."
         )
 
-    # -----------------------------
-    # Вызов LLM
-    # -----------------------------
 
     def _call_llm(self, prompt: str) -> str:
         try:
@@ -143,9 +135,6 @@ class ImageAnalyzer:
             print(f"[ImageAnalyzer] LLM error: {e}")
             return ""
 
-    # -----------------------------
-    # JSON parsing
-    # -----------------------------
 
     def _try_parse_json(self, text: str):
         if not text:

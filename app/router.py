@@ -1,8 +1,11 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
+
+from app.schemas import AddDocumentsRequest
 from utils import pdf_reader
 from utils.all_text_analyzer import all_text_analyzer
 from utils.content_analyzer import content_analyzer
 from utils.image_analyzer import image_analyzer
+from utils.rag_analyzer import rag_analyzer
 import os
 import asyncio
 
@@ -14,8 +17,10 @@ async def startup_event():
     await asyncio.gather(
         all_text_analyzer.initialize_models(),
         content_analyzer.initialize_models(),
-        image_analyzer.initialize_models()
+        image_analyzer.initialize_models(),
     )
+
+    rag_analyzer.initialize()
 
 @router.get("/")
 async def root_info():
@@ -26,7 +31,7 @@ async def root_info():
 
 
 @router.post("/analyze/structure")
-async def analyze_presentation(file: UploadFile = File(...)):
+async def analyze_presentation(file: UploadFile = File(...), use_rag: bool = False, user_context: str = ""):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
@@ -43,14 +48,23 @@ async def analyze_presentation(file: UploadFile = File(...)):
 
         full_text = "\n\n".join(full_text_blocks)
 
-        summary_report = all_text_analyzer.analyze_full_text(full_text)
+        if use_rag and user_context:
+            relevant_docs = rag_analyzer.query(user_context, top_k=3)
+            context_text = "\n".join([d["text"] for d in relevant_docs])
+            prompt_with_context = f"{context_text}\n\n{full_text}"
+        else:
+            prompt_with_context = full_text
+
+        result = all_text_analyzer.analyze_full_text(prompt_with_context)
+        rag_output = rag_analyzer.query(prompt_with_context)
 
         os.unlink(pdf_path)
 
         return {
             "filename": file.filename,
             "total_slides": len(slides_text),
-            "summary_report": summary_report
+            "summary_report": result,
+            "rag_info" : rag_output
         }
 
     except Exception as e:
@@ -107,6 +121,28 @@ async def analyze_visual(file: UploadFile = File(...)):
             "filename": file.filename,
             "total_slides": len(slide_images),
             "visual_report": result
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/add")
+def add_documents_to_rag(data: AddDocumentsRequest):
+    """
+    Добавление новых документов в коллекцию RAG (Qdrant).
+    """
+    try:
+        if not rag_analyzer.initialized:
+            rag_analyzer.initialize()
+
+        rag_analyzer.add_documents(
+            docs=data.documents,
+            ids=data.ids
+        )
+
+        return {
+            "status": "success",
+            "added": len(data.documents)
         }
 
     except Exception as e:
