@@ -13,12 +13,14 @@ class AllTextAnalyzer:
     Поддерживает большие презентации за счет разбивки на блоки слайдов.
     """
 
-    def __init__(self):
+    def __init__(self, model_name, max_tokens, temperature):
         self.hf_token: Optional[str] = get_hf_token()
         self.client: Optional[InferenceClient] = None
-        self.model_name: str = "IlyaGusev/saiga_llama3_8b"
+        self.model_name: str = model_name
         self.models_initialized: bool = False
         self.slides_per_block: int = 5
+        self.max_tokens = max_tokens
+        self.temperature = temperature
 
     async def initialize_models(self) -> None:
         if self.models_initialized:
@@ -49,7 +51,7 @@ class AllTextAnalyzer:
         block_results = []
         for block_text in blocks:
             prompt = self._build_prompt_for_structural_analysis(block_text)
-            raw = self._call_chat_model(prompt, max_tokens=2000, temperature=0.0)
+            raw = self._call_chat_model(prompt, max_tokens=self.max_tokens, temperature=self.temperature)
             parsed = self._try_parse_json(raw)
             if parsed:
                 block_results.append(parsed)
@@ -338,6 +340,3 @@ class AllTextAnalyzer:
 
     def _clean_response(self, text: str) -> str:
         return re.sub(r'\s+', ' ', text).strip()
-
-
-all_text_analyzer = AllTextAnalyzer()

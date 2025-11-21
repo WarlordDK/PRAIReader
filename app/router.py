@@ -1,11 +1,12 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, status
 
 from app.schemas import AddDocumentsRequest
 from utils import pdf_reader
-from utils.all_text_analyzer import all_text_analyzer
+from utils.all_text_analyzer import AllTextAnalyzer
 from utils.content_analyzer import content_analyzer
 from utils.image_analyzer import image_analyzer
 from utils.rag_analyzer import rag_analyzer
+from core.config import get_model_list
 import os
 import asyncio
 
@@ -15,19 +16,11 @@ router = APIRouter(prefix="/api", tags=["Analyze Presentations"])
 @router.on_event("startup")
 async def startup_event():
     await asyncio.gather(
-        all_text_analyzer.initialize_models(),
         content_analyzer.initialize_models(),
         image_analyzer.initialize_models(),
     )
 
     rag_analyzer.initialize()
-
-@router.get("/")
-async def root_info():
-    return {
-        "message": "PRAIReader (Full-Text Analyzer Only)",
-        "full_text_model_ready": all_text_analyzer.models_initialized
-    }
 
 
 def _filter_slides_by_flags(slides_text, first_slide: bool, last_slide: bool):
@@ -52,26 +45,43 @@ def _filter_slides_by_flags(slides_text, first_slide: bool, last_slide: bool):
     included = [s for s in slides_text if s['slide_number'] not in excluded]
     return included, sorted(list(excluded))
 
+@router.get('/models')
+async def get_all_models():
+    return get_model_list()
+
+@router.get('/model/{model_id}')
+async def get_model(model_id : int, models = Depends(get_all_models)):
+    for model in models:
+        if model.get('id') == model_id : return model
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Указанной модели не существует")
 
 @router.post("/analyze/structure")
 async def analyze_presentation(
     file: UploadFile = File(...),
+    model_id : int = 1,
     use_rag: bool = False,
     user_context: str = "",
     first_slide: bool = True,
-    last_slide: bool = True
+    last_slide: bool = True,
+    max_tokens : int = 2000,
+    temperature : float = 0.0,
+    models = Depends(get_all_models)
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
+    model_name = None
+    for model in models:
+        if model.get('id') == model_id : model_name = model.get('model_name')
+    if not model_name:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Модель не найдена')
+
     try:
         pdf_path = pdf_reader.save_temp_pdf(file)
-        slides_text = pdf_reader.extract_text_by_slides(pdf_path)  # original list with numbers
+        slides_text = pdf_reader.extract_text_by_slides(pdf_path)
 
-        # фильтрация
         included_slides, excluded_slide_numbers = _filter_slides_by_flags(slides_text, first_slide, last_slide)
 
-        # Собираем full_text таким образом, чтобы сохранять реальные номера слайдов (--- SLIDE N ---)
         full_text_blocks = []
         for slide in included_slides:
             idx = slide.get("slide_number", "?")
@@ -89,14 +99,16 @@ async def analyze_presentation(
         else:
             prompt_with_context = full_text
 
+        all_text_analyzer = AllTextAnalyzer(model_name=model_name, max_tokens=max_tokens, temperature=temperature)
+        await all_text_analyzer.initialize_models()
         result = all_text_analyzer.analyze_full_text(prompt_with_context)
 
         os.unlink(pdf_path)
 
         return {
             "filename": file.filename,
-            "total_slides": len(slides_text),            # сохраняем общее количество слайдов
-            "excluded_slides": excluded_slide_numbers,   # список исключённых номеров (для фронта)
+            "total_slides": len(slides_text),
+            "excluded_slides": excluded_slide_numbers,
             "summary_report": result,
             "rag_info": rag_output
         }
