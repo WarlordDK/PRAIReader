@@ -1,24 +1,19 @@
 FROM python:3.11-slim
 
-ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
-    libjpeg-dev \
-    libopenjp2-7-dev \
-    libfreetype6-dev \
-    liblcms2-dev \
-    libtiff5-dev \
-    libpng-dev \
-    gcc \
+    libjpeg62-turbo \
+    libpng16-16 \
+    libtiff6 \
+    libopenjp2-7 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
