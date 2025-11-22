@@ -1,35 +1,26 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, status
+from typing import List
+
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, status, Query
+
 
 from app.schemas import AddDocumentsRequest
 from utils import pdf_reader
 from utils.all_text_analyzer import AllTextAnalyzer
-from utils.content_analyzer import content_analyzer
-from utils.image_analyzer import image_analyzer
+from utils.content_analyzer import ContentAnalyzer
+from utils.image_analyzer import ImageAnalyzer
 from utils.rag_analyzer import rag_analyzer
-from core.config import get_model_list
+from core.config import get_llm_models_list, get_vlm_models_list
 import os
 import asyncio
 
-router = APIRouter(prefix="/api", tags=["Analyze Presentations"])
+router = APIRouter(prefix="/api", tags=["Анализатор презентаций"])
 
 
 @router.on_event("startup")
 async def startup_event():
-    await asyncio.gather(
-        content_analyzer.initialize_models(),
-        image_analyzer.initialize_models(),
-    )
-
     rag_analyzer.initialize()
 
-
 def _filter_slides_by_flags(slides_text, first_slide: bool, last_slide: bool):
-    """
-    slides_text: list of dicts {'slide_number': int, 'text': str, ...}
-    Возвращает (included_slides, excluded_slide_numbers)
-    included_slides — список словарей, которые попадут в анализ (в том же формате),
-    excluded_slide_numbers — список номеров исключённых слайдов.
-    """
     if not slides_text:
         return [], []
 
@@ -45,28 +36,48 @@ def _filter_slides_by_flags(slides_text, first_slide: bool, last_slide: bool):
     included = [s for s in slides_text if s['slide_number'] not in excluded]
     return included, sorted(list(excluded))
 
-@router.get('/models')
-async def get_all_models():
-    return get_model_list()
+@router.get('/models_llm',
+            summary='Все LLM-модели',
+            description='Получение списка всех LLM-моделей')
+async def get_all_llm_models() -> List[dict]:
+    return get_llm_models_list()
 
-@router.get('/model/{model_id}')
-async def get_model(model_id : int, models = Depends(get_all_models)):
+@router.get('/models_vlm',
+            summary='Все VLM-модели',
+            description='Получение списка всех VLM-моделей')
+async def get_all_vlm_models() -> List[dict]:
+    return get_vlm_models_list()
+
+@router.get('/model_vlm/{model_id}',
+            summary='VLM-модели по ID',
+            description='Для получения конкретной VLM-модели задайте её ID')
+async def get_vlm_model(model_id : int, models = Depends(get_all_vlm_models)):
     for model in models:
         if model.get('id') == model_id : return model
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Указанной модели не существует")
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Указанной vlm-модели не существует")
 
-@router.post("/analyze/structure")
+@router.get('/model_llm/{model_id}',
+            summary='LLM-модели по ID',
+            description='Для получения конкретной LLM-модели задайте её ID')
+async def get_llm_model(model_id : int, models = Depends(get_all_llm_models)):
+    for model in models:
+        if model.get('id') == model_id : return model
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Указанной llm-модели не существует")
+
+@router.post('/analyze/structure',
+             summary='Структурный анализ',
+             description='Анализируется количество текста, удобочитаемость, последовательность изложения и т.п.')
 async def analyze_presentation(
-    file: UploadFile = File(...),
-    model_id : int = 1,
-    use_rag: bool = False,
-    user_context: str = "",
-    first_slide: bool = True,
-    last_slide: bool = True,
-    max_tokens : int = 2000,
-    temperature : float = 0.0,
-    models = Depends(get_all_models)
-):
+    file : UploadFile = File(..., description='Загрузите презентацию в формате PDF'),
+    model_id: int = Query(1, description='ID LLM-модели'),
+    use_rag: bool = Query(False, description='Использование RAG-системы'),
+    user_context: str = Query(None, max_length=255, description='Контекст для RAG (промт)'),
+    first_slide: bool = Query(True, description='Включение первого слайда в анализ'),
+    last_slide: bool = Query(True, description='Включение последнего слайда в анализ'),
+    max_tokens: int = Query(2000, gt=300, le=2000, description='Максимальное количество токенов для одного ответа'),
+    temperature: float = Query(0.0, ge=0.0, lt=1.0, description='Параметр степени случайности/креативности ответа'),
+    models = Depends(get_all_llm_models)
+) -> dict:
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
@@ -117,14 +128,26 @@ async def analyze_presentation(
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
 
-@router.post("/analyze/content")
+@router.post("/analyze/content",
+             summary='Анализ контента',
+             description='Анализируется смысловая нагрузка, делается выкладка со всей презентации')
 async def analyze_content(
-    file: UploadFile = File(...),
-    first_slide: bool = True,
-    last_slide: bool = True
-):
+    file : UploadFile = File(..., description='Загрузите презентацию в формате PDF'),
+    model_id: int = Query(1, description='ID LLM-модели'),
+    first_slide: bool = Query(True, description='Включение первого слайда в анализ'),
+    last_slide: bool = Query(True, description='Включение последнего слайда в анализ'),
+    max_tokens: int = Query(2000, gt=300, le=2000, description='Максимальное количество токенов для одного ответа'),
+    temperature: float = Query(0.0, ge=0.0, lt=1.0, description='Параметр степени случайности/креативности ответа'),
+    models = Depends(get_all_llm_models)
+) -> dict:
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    model_name = None
+    for model in models:
+        if model.get('id') == model_id : model_name = model.get('model_name')
+    if not model_name:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Модель не найдена')
 
     try:
         pdf_path = pdf_reader.save_temp_pdf(file)
@@ -140,6 +163,8 @@ async def analyze_content(
 
         full_text = "\n\n".join(full_text_blocks)
 
+        content_analyzer = ContentAnalyzer(model_name=model_name, max_tokens=max_tokens, temperature=temperature)
+        await content_analyzer.initialize_models()
         analysis = content_analyzer.analyze_full_content(full_text)
 
         os.unlink(pdf_path)
@@ -154,8 +179,14 @@ async def analyze_content(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Content analysis failed: {e}")
 
-@router.post("/analyze/visual")
-async def analyze_visual(file: UploadFile = File(...)):
+@router.post("/analyze/visual",
+             summary='Визуальный анализ',
+             description='Анализируется заболоченность текста/изображений на слайде')
+async def analyze_visual(
+        file: UploadFile = File(...),
+        model_id: int = Query(1, description='ID VLM-модели'),
+        models = Depends(get_all_vlm_models)
+) -> dict:
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
@@ -164,7 +195,14 @@ async def analyze_visual(file: UploadFile = File(...)):
 
         slide_images = pdf_reader.pdf_to_images(pdf_path)
 
+        model_name = None
+        for model in models:
+            if model.get('id') == model_id: model_name = model.get('model_name')
+        if not model_name:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Модель не найдена')
 
+        image_analyzer = ImageAnalyzer(model_name=model_name)
+        await image_analyzer.initialize_models()
         result = await image_analyzer.analyze_visual_presentation(slide_images)
 
         os.unlink(pdf_path)
@@ -178,11 +216,10 @@ async def analyze_visual(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/add")
-def add_documents_to_rag(data: AddDocumentsRequest):
-    """
-    Добавление новых документов в коллекцию RAG (Qdrant).
-    """
+@router.post("/add",
+             summary='Дополнение RAG-системы контекстом',
+             description='Добавление новых документов в коллекцию RAG (Qdrant)')
+def add_documents_to_rag(data: AddDocumentsRequest) -> dict:
     try:
         if not rag_analyzer.initialized:
             rag_analyzer.initialize()
