@@ -1,5 +1,8 @@
+from idlelib.debugger_r import DictProxy
+
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
+
 
 class AddDocumentsRequest(BaseModel):
     documents : List[str]
